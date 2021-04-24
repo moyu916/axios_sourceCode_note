@@ -14,8 +14,8 @@ var mergeConfig = require('./mergeConfig');
 function Axios(instanceConfig) {
   this.defaults = instanceConfig;
   this.interceptors = {
-    request: new InterceptorManager(),
-    response: new InterceptorManager()
+    request: new InterceptorManager(), // axios.interceptors.request.use()
+    response: new InterceptorManager() // axios.interceptors.response.use()
   };
 }
 

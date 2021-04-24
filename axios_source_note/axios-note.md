@@ -358,5 +358,165 @@ Axios.prototype.request = function request(config) {
 
 至此，`config`走完了它传奇的一生 
 
-### 拦截器
+### core文件夹
 
+axios的核心
+
+#### Axios.js——axios是怎样按顺序执行，请求拦截器—发送请求—响应拦截器的
+
+```js
+// 请求最终都是通过这个函数发送出去的，里面涉及到config的合并，请求响应拦截器的实现等
+/* chain数组是用来盛放拦截器方法和dispatchRequest方法的，
+通过promise从chain数组里按序取出回调函数逐一执行，最后将处理后的新的promise在Axios.prototype.request方法里返回出去，
+并将response或error传送出去，这就是Axios.prototype.request的使命 */
+
+function Axios(instanceConfig) {
+  this.defaults = instanceConfig;
+  this.interceptors = {
+    request: new InterceptorManager(), // axios.interceptors.request.use(), InterceptorManager.js
+    response: new InterceptorManager() // axios.interceptors.response.use()
+  };
+}
+
+Axios.prototype.request = function request(config) {
+  // ...
+  var chain = [dispatchRequest, undefined]; // 回调函数组成的数组，chain -> 链式调用
+  var promise = Promise.resolve(config);
+
+  this.interceptors.request.forEach(function unshiftRequestInterceptors(interceptor) {
+    chain.unshift(interceptor.fulfilled, interceptor.rejected);// unshift 请求拦截器添加到chain数组的头部, 
+                                                               // 两项代表promise.then的onResolved和onRejected
+  });
+  this.interceptors.response.forEach(function pushResponseInterceptors(interceptor) {
+    chain.push(interceptor.fulfilled, interceptor.rejected); // push 响应拦截器添加到chain数组的尾部
+  });
+
+  while (chain.length) { // 只要chain数组长度不为0，就一直执行while循环，实现了对chain数组的链式调用
+    promise = promise.then(chain.shift(), chain.shift());  // 两项代表promise.then的onResolved和onRejected
+  }
+
+  return promise;
+}
+
+    /* 第一个请求拦截器的fulfilled函数会接收到promise对象初始化时传入的config对象，而请求拦截器又规定用户写的fulfilled函数必须返回一个config对象，所以通过promise实现链式调用时，每个请求拦截器的fulfilled函数都会接收到一个config对象
+
+     第一个响应拦截器的fulfilled函数会接受到dispatchRequest（也就是我们的请求方法）请求到的数据（也就是response对象）,而响应拦截器又规定用户写的fulfilled函数必须返回一个response对象，所以通过promise实现链式调用时，每个响应拦截器的fulfilled函数都会接收到一个response对象
+
+     任何一个拦截器的抛出的错误，都会被下一个拦截器的rejected函数收到，所以dispatchRequest抛出的错误才会被响应拦截器接收到。
+
+     因为axios是通过promise实现的链式调用，所以我们可以在拦截器里进行异步操作，而拦截器的执行顺序还是会按照我们上面说的顺序执行，也就是 dispatchRequest 方法一定会等待所有的请求拦截器执行完后再开始执行，响应拦截器一定会等待 dispatchRequest 执行完后再开始执行。 */
+```
+
+#### 拦截器
+
+```js
+// /lib/core/InterceptorManager.js
+实现比较简单，自己看源码吧
+```
+
+#### dispatchRequest.js——发送请求
+
+dispatchRequest主要做了3件事：
+1，拿到config对象，对config进行传给http请求适配器前的最后处理；
+2，http请求适配器根据config配置，发起请求
+3，http请求适配器请求完成后，如果成功则根据header、data、和config.transformResponse（关于transformResponse，下面的[数据转换器](https://www.imooc.com/article/32292?block_id=tuijian_wz#数据转换器-转换请求与响应数据)会进行讲解）拿到数据转换后的response，并return
+
+### axios是如何用promise搭起基于xhr的异步桥梁的
+
+axios的使用
+
+```js
+import axios from 'axios'
+
+axios.get(/**/)
+.then(data => {
+  // 此处可以拿到向服务端请求回的数据
+})
+.catch(error => {
+  // 此处可以拿到请求失败或取消或其他处理失败的错误对象
+})
+```
+
+用户无论以什么方式调用axios，最终都是调用的`Axios.prototype.request`方法，这个方法最终返回的是一个Promise对象
+
+```javascript
+Axios.prototype.request = function request(config) {
+  // ...
+  var chain = [dispatchRequest, undefined];
+  // 将config对象当作参数传给Primise.resolve方法
+  var promise = Promise.resolve(config);
+
+  while (chain.length) {
+    promise = promise.then(chain.shift(), chain.shift());
+  }
+
+  return promise;
+};
+```
+
+`Axios.prototype.request`方法会调用`dispatchRequest`方法，而`dispatchRequest`方法会调用`xhrAdapter`方法，`xhrAdapter`方法返回的是还一个Promise对象
+
+```javascript
+// /lib/adapters/xhr.js
+function xhrAdapter(config) {
+  return new Promise(function dispatchXhrRequest(resolve, reject) {
+    // ... 省略代码
+  });
+};
+```
+
+`xhrAdapter`内的XHR发送请求成功后会执行这个Promise对象的`resolve`方法,并将请求的数据传出去,
+反之则执行`reject`方法，并将错误信息作为参数传出去。
+
+```javascript
+// /lib/adapters/xhr.js
+var request = new XMLHttpRequest();
+var loadEvent = 'onreadystatechange';
+
+request[loadEvent] = function handleLoad() {
+  // ...
+  // 往下走有settle的源码
+  settle(resolve, reject, response);
+  // ...
+};
+request.onerror = function handleError() {
+  reject(/**/);
+  request = null;
+};
+request.ontimeout = function handleTimeout() {
+  reject(/**/);
+  request = null;
+};
+```
+
+验证服务端的返回结果是否通过验证：
+
+```javascript
+// /lib/core/settle.js
+function settle(resolve, reject, response) {
+  var validateStatus = response.config.validateStatus;
+  if (!response.status || !validateStatus || validateStatus(response.status)) {
+    resolve(response);
+  } else {
+    reject(/**/);
+  }
+};
+```
+
+回到`dispatchRequest`方法内，首先得到`xhrAdapter`方法返回的Promise对象,
+然后通过`.then`方法，对`xhrAdapter`返回的Promise对象的成功或失败结果再次加工，
+成功的话，则将处理后的`response`返回，
+失败的话，则返回一个状态为`rejected`的Promise对象，
+
+```javascript
+  return adapter(config).then(function onAdapterResolution(response) {
+    // ...
+    return response;
+  }, function onAdapterRejection(reason) {
+    // ...
+    return Promise.reject(reason);
+  });
+};
+```
+
+那么至此，用户调用`axios()`方法时，就可以直接调用Promise的`.then`或`.catch`进行业务处理了。
