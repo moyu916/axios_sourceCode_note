@@ -155,15 +155,15 @@ module.exports = function xhrAdapter(config) {
       request.upload.addEventListener('progress', config.onUploadProgress);
     }
 
-    if (config.cancelToken) {
+    if (config.cancelToken) { // 取消请求，cancel文件夹里的CancelToken.js
       // Handle cancellation
       config.cancelToken.promise.then(function onCanceled(cancel) {
         if (!request) {
           return;
         }
 
-        request.abort();
-        reject(cancel);
+        request.abort(); // 取消请求
+        reject(cancel); // 改变promise实例的状态为rejected
         // Clean up request
         request = null;
       });

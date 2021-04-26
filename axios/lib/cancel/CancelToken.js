@@ -14,7 +14,7 @@ function CancelToken(executor) {
   }
 
   var resolvePromise;
-  this.promise = new Promise(function promiseExecutor(resolve) {
+  this.promise = new Promise(function promiseExecutor(resolve) { // 此时this.promise的状态为pending
     resolvePromise = resolve;
   });
 

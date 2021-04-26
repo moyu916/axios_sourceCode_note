@@ -90,12 +90,14 @@ function spread(callback)
 
 #### 数据转换器
 
-##### 请求转换器 transfromRequest
+`自动转换json数据`
 
-请求前对数据进行转换
+##### 请求转换器 transfromRequest
 
 ```js
 // 发送请求前对数据做转换，不需要使用者自己转换数据格式以及对应的请求头 
+/* 请求转换器的使用地方是http请求前，使用请求转换器对请求数据做处理，然后传给http请求适配器使用 */
+
 transformRequest: [function transformRequest(data, headers) {
     normalizeHeaderName(headers, 'Accept');
     normalizeHeaderName(headers, 'Content-Type');
@@ -117,7 +119,7 @@ transformRequest: [function transformRequest(data, headers) {
     }
     if (utils.isObject(data)) { // data是obj
       setContentTypeIfUnset(headers, 'application/json;charset=utf-8');
-      return JSON.stringify(data);
+      return JSON.stringify(data); // 请求转换器将对象转为json字符串
     }
     return data;
   }],
@@ -128,16 +130,23 @@ transformRequest: [function transformRequest(data, headers) {
 对请求响应后的响应体做数据转换
 
 ```js
-  transformResponse: [function transformResponse(data) {
+// 响应转换器的使用地方是在http请求完成后，根据http请求适配器的返回值做数据转换处理
+
+transformResponse: [function transformResponse(data) {
     var result = data;
     if (utils.isString(result) && result.length) {
       try {
-        result = JSON.parse(result);
+        result = JSON.parse(result); // 响应转换器将字符串转为json对象
       } catch (e) { /* Ignore */ }
     }
     return result;
   }],
 ```
+
+##### 转换器和拦截器的关系？
+
+在请求时，拦截器主要负责修改config配置项，数据转换器主要负责转换请求体，比如转换对象为字符串
+在请求响应后，拦截器可以拿到`response`，数据转换器主要负责处理响应体，比如转换字符串为对象。
 
 ##### timeout 
 
@@ -520,3 +529,117 @@ function settle(resolve, reject, response) {
 ```
 
 那么至此，用户调用`axios()`方法时，就可以直接调用Promise的`.then`或`.catch`进行业务处理了。
+
+### 其它功能点
+
+#### header的设置
+
+##### 使用
+
+```js
+import axios from 'axios'
+
+// 设置通用header
+axios.defaults.headers.common['X-Requested-With'] = 'XMLHttpRequest'; // xhr标识
+
+// 设置某种请求的header
+axios.defaults.headers.post['Content-Type'] = 'application/x-www-form-urlencoded;charset=utf-8';
+
+// 设置某次请求的header
+axios.get(url, {
+  headers: {
+    'Authorization': 'whr1',
+  },
+})
+```
+
+##### 源码
+
+```js
+// /lib/core/dispatchRequest.js  -  44行
+
+  config.headers = utils.merge(
+    config.headers.common || {},
+    config.headers[config.method] || {},
+    config.headers || {}
+  );
+```
+
+#### 如何取消已经发送的请求
+
+##### 使用
+
+```js
+axios.get(url, {
+  cancelToken: new axios.CancelToken(cancel => { // --> start
+    if (/* 取消条件 */) {
+      cancel('取消日志'); // cancel是源码里定义的函数
+    }
+  }) // --> end   对应源码的executor
+});
+```
+
+##### 源码
+
+```js
+// cancel/CancelToken.js
+// adapters/xhr.js line159
+取消功能的核心是通过CancelToken内的this.promise = new Promise(resolve => resolvePromise = resolve)，得到实例属性promise，此时该promise的状态为pending。通过这个属性，在/lib/adapters/xhr.js文件中继续给这个promise实例添加.then方法（xhr.js文件的159行config.cancelToken.promise.then(message => request.abort())）；
+
+在CancelToken外界，通过executor参数拿到对cancel方法的控制权，这样当执行cancel方法时就可以改变实例的promise属性的状态为rejected，从而执行request.abort()方法达到取消请求的目的。
+```
+
+**xhr.abort()**
+
+如果该请求已被发出，**XMLHttpRequest.abort()** 方法将终止（中断而非取消）该请求。当一个请求被终止，它的  [`readyState`](https://developer.mozilla.org/zh-CN/docs/Web/API/XMLHttpRequest/readyState) 将被置为 `XMLHttpRequest.UNSENT` (0)，并且请求的 [`status`](https://developer.mozilla.org/zh-CN/docs/Web/API/XMLHttpRequest/status) 置为 0
+
+![image-20210426103224456](axios-note.assets/image-20210426103224456.png)
+
+#### 携带跨域cookie
+
+创建一个跨站点访问控制（cross-site Access-Control）请求
+
+##### 使用
+
+```js
+axios.defaults.withCredentials = true;
+```
+
+##### 源码
+
+```js
+var request = new XMLHttpRequest();
+
+// /lib/adapters/xhr.js
+if (config.withCredentials) {
+  request.withCredentials = true; // xhr.withCredentials
+}
+```
+
+#### 超时处理
+
+##### 源码
+
+```js
+// /adapters/xhr.js
+request.timeout = config.timeout;
+
+// /adapters/xhr.js
+// 通过createError方法，将错误信息合为一个字符串
+request.ontimeout = function handleTimeout() {
+  reject(createError('timeout of ' + config.timeout + 'ms exceeded',  // 超时reject出去
+    config, 'ECONNABORTED', request));
+};
+```
+
+axios库外如何添加超时后的处理
+
+```js
+axios().catch(error => { // 捕获reject状态的promise
+  const { message } = error;
+  if (message.indexOf('timeout') > -1){ // 如果reject是因为timeout，做超时处理
+    // 超时处理
+  }
+})
+```
+
