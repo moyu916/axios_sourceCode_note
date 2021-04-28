@@ -643,3 +643,36 @@ axios().catch(error => { // 捕获reject状态的promise
 })
 ```
 
+### axios请求适配器——适配器模式
+
+适配器模式通过**把一个类的接口变换成客户端所期待的另一种接口**，可以帮我们解决**不兼容**的问题。
+
+axios对于浏览器端与node端可以使用完全一样的api发送请求，完美地**抹平了两种环境下api的调用差异**，靠的正是对适配器模式的灵活运用。
+
+我们已经知道，在 axios 的核心逻辑中，实际上派发请求的是 dispatchRequest 方法。在dispatchRequest.js中，对传入的config进行数据转换与合并，调用adapter发送请求。而adapter就是采用适配器模式，提供了统一的接口。
+
+// defaults.js
+
+![image-20210428170239276](axios-note.assets/image-20210428170239276.png)
+
+```js
+// dispatchRequest.js
+var adapter = config.adapter || defaults.adapter;
+module.exports = function dispatchRequest(config) {
+    ... transformData
+    ... merge
+    return adapter(config).then(...) // 用适配器发送请求
+}
+```
+
+adapters文件夹下——http.js、xhr.js
+
+定义的参数个数，参数意义，以及函数内部封装的一些方法，这两个js文件对外暴露的接口都是一样的
+
+http.js
+
+![image-20210428170733611](axios-note.assets/image-20210428170733611.png)
+
+xhr.js
+
+![image-20210428170810891](axios-note.assets/image-20210428170810891.png)
